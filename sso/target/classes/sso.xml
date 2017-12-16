@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<sso> 
+	<setting name="siteUrl" value="http://sso.goodIdea.com:8088"/>  
+	<setting name="casUrl" value="http://cas.goodIdea.com:8080"/>  
+</sso>

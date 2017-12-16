@@ -1,0 +1,178 @@
+package com.goodidea.sso.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import javax.persistence.criteria.CriteriaBuilder;
+import javax.persistence.criteria.CriteriaQuery;
+import javax.persistence.criteria.Predicate;
+import javax.persistence.criteria.Root;
+import javax.transaction.Transactional;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Service;
+
+import com.goodidea.sso.dao.MenuRepository;
+import com.goodidea.sso.dao.PrivilegesRepository;
+import com.goodidea.sso.domin.Menu;
+import com.goodidea.sso.domin.Privileges;
+import com.goodidea.sso.domin.Resources;
+import com.goodidea.sso.dto.MenuDto;
+import com.goodidea.sso.dto.PrivilegesDto;
+import com.goodidea.sso.dto.ResourcesDto;
+import com.goodidea.sso.dto.TreeDto;
+import com.goodidea.sso.form.MenuForm;
+import com.goodidea.sso.form.ResourceForm;
+import com.goodidea.sso.service.MenuService;
+import com.goodidea.sso.service.PrivilegesService;
+import com.goodidea.sso.service.RedisService;
+import com.goodidea.sso.service.SystemsService;
+
+@Service
+public class MenuServiceImpl extends BaseServiceImpl<Menu, Long> implements MenuService {
+	
+	@Autowired
+	private MenuRepository menuRepository;
+	@Autowired
+	private PrivilegesService privilegesService;
+	@Autowired
+	private RedisService redisService;
+	@Autowired
+	private SystemsService  systemsService;
+	
+	@Override
+	@Transactional
+	public void save(Menu menu) throws Exception {
+		// TODO Auto-generated method stub
+		menuRepository.save(menu);
+	}
+
+	@Override
+	public void updateInfo(MenuForm form) throws Exception {
+		// TODO Auto-generated method stub
+		Menu menu = findEntityById(form.getId());
+		menu.setName(form.getName());
+		menu.setAlias(form.getAlias());
+		menu.setUrl(form.getUrl());
+		menu.setParentId(StringUtils.isNotBlank(form.getParentId())?form.getParentId():"TOP");
+		menu.getPrivileges().clear();
+		for (String id : form.getPrivilegeIds()) {
+			Privileges privileges = privilegesService.findEntityById(id);
+			menu.getPrivileges().add(privileges);
+		}
+		menu.setSystems(systemsService.findEntityById(form.getSystemId()));
+		redisService.deletes("privileges");
+		menuRepository.save(menu);
+		
+	}
+
+
+	@Override
+	public List<Menu> findMenuByConn(MenuForm form) throws Exception {
+		List<Menu> menus = menuRepository.findAll(new Specification<Menu>(){  
+            @Override  
+            public Predicate toPredicate(Root<Menu> root, CriteriaQuery<?> query, CriteriaBuilder criteriaBuilder) { 
+            	  Predicate p1  = criteriaBuilder.like(root.get("name").as(String.class), "%"+(form.getName()!=null?form.getName():"")+"%"); 
+            	  Predicate p2 = criteriaBuilder.equal(root.get("isdel").as(String.class), "0"); 
+            	  Predicate p3 = criteriaBuilder.equal(root.get("parentId").as(String.class), form.getParentId());
+            	  query.where(criteriaBuilder.and(p1,p2)); 
+           
+                  return query.getRestriction(); 
+            }  
+        });
+	return menus; 
+	}
+
+	@Override
+	public Set getTree(MenuForm form) throws Exception {
+		// TODO Auto-generated method stub
+		Set<TreeDto> dtos = new HashSet<>();
+		TreeDto dto = null;
+		for (Menu menu : findMenuByConn(form)) {
+			dto = new TreeDto();
+			dto.setId(menu.getId());
+			dto.setName(menu.getName());
+			dto.setpId(menu.getParentId());
+			dto.setIsParent("TOP".equals(menu.getParentId())?true:false);
+			dtos.add(dto);
+		}
+		return dtos;
+	}
+
+	@Override
+	public void saveInfo(MenuForm form) throws Exception {
+		Menu menu = new Menu();
+		menu.setName(form.getName());
+		menu.setAlias(form.getAlias());
+		menu.setUrl(form.getUrl());
+		menu.setParentId(StringUtils.isNotBlank(form.getParentId())?form.getParentId():"TOP");
+		for (String id : form.getPrivilegeIds()) {
+			Privileges privileges = privilegesService.findEntityById(id);
+			menu.getPrivileges().add(privileges);
+		}
+		menu.setSystems(systemsService.findEntityById(form.getSystemId()));
+		redisService.deletes("privileges");
+		menuRepository.save(menu);
+
+	}
+
+	@Override
+	public List<MenuDto> getTreeGird() throws Exception {
+
+		MenuForm form = new MenuForm();
+		List<MenuDto> dtos = new ArrayList<>();
+		List<Menu> menus = findMenuByConn(form);
+		/*if(redisService.exists("menu")){
+			List meun = redisService.lRange("menu", 0, 1);
+			System.out.println("redis");
+			return meun;
+		}*/
+		for (Menu menu : menus) {
+			if("TOP".equals(menu.getParentId())){
+				MenuDto dto = new MenuDto();
+				dto.setId(menu.getId());
+				dto.setName(menu.getName());
+				dto.setAlias(menu.getAlias());
+				dto.setParentId(menu.getParentId());
+				PrivilegesDto pdto = null;
+				dto.getPrivileges().addAll(menu.getPrivileges());
+				dto.getChildSet().addAll(getChild(menus,dto,menu.getId()));
+				dtos.add(dto);
+			}
+		}
+//		redisService.lPush("menu",dtos);
+		return dtos;
+	}
+	
+	private List<MenuDto> getChild(List<Menu> sons,MenuDto menuDto,String id) throws Exception {
+		// TODO Auto-generated method stub
+		List<MenuDto> dtos = new ArrayList<>();
+		MenuDto dto  = null;
+		for (Menu menu : sons) {
+			 	if(id.equals(menu.getParentId())){
+			 		dto = new MenuDto();
+					dto.setId(menu.getId());
+					dto.setName(menu.getName());
+					dto.setAlias(menu.getAlias());
+					dto.setParentId(menu.getParentId());
+					dto.getPrivileges().addAll(menu.getPrivileges());
+			 		getChild(sons,dto,menu.getId());
+			 		dto.getChildSet().addAll(getChild(sons,dto,menu.getId()));
+			 		dtos.add(dto);
+			 	}
+		}
+		return dtos;
+	}
+
+	@Override
+	public Menu findMenuByAlias(String alias) throws Exception {
+		// TODO Auto-generated method stub
+		return menuRepository.findMenuByAlias(alias);
+	}
+	
+}
